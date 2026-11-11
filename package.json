@@ -1,0 +1,16 @@
+{
+  "name": "api-pessoas-passaportes",
+  "version": "1.0.0",
+  "description": "API REST simples para gerenciar pessoas e passaportes",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}
