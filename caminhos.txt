@@ -1,0 +1,13 @@
+http://localhost:3000
+
+POST http://localhost:3000/pessoas
+GET http://localhost:3000/pessoas
+GET http://localhost:3000/pessoas/:id
+PUT http://localhost:3000/pessoas/:id
+DELETE http://localhost:3000/pessoas/:id
+
+POST http://localhost:3000/passaportes
+GET http://localhost:3000/passaportes
+GET http://localhost:3000/passaportes/:id
+PUT http://localhost:3000/passaportes/:id
+DELETE http://localhost:3000/passaportes/:id

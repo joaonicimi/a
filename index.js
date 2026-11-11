@@ -1,228 +1,115 @@
 const express = require("express");
-
 const app = express();
-const PORT = process.env.PORT || 3000;
-
 app.use(express.json());
 
 const pessoas = [];
 const passaportes = [];
-let proximoIdPessoa = 1;
-let proximoIdPassaporte = 1;
+let idPessoa = 1;
+let idPassaporte = 1;
 
-function dataValida(valor) {
-  if (typeof valor !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(valor)) {
-    return false;
-  }
+const dataValida = (valor) =>
+  typeof valor === "string" &&
+  /^\d{4}-\d{2}-\d{2}$/.test(valor) &&
+  !Number.isNaN(new Date(valor).getTime()) &&
+  new Date(valor).toISOString().slice(0, 10) === valor;
 
-  const data = new Date(`${valor}T00:00:00.000Z`);
-  return !Number.isNaN(data.getTime()) && data.toISOString().slice(0, 10) === valor;
+const dadosPessoaValidos = (d) =>
+  d && typeof d.nome === "string" && d.nome.trim() &&
+  typeof d.cpf === "string" && d.cpf.trim() && dataValida(d.dataNascimento);
+
+const dadosPassaporteValidos = (d) =>
+  d && typeof d.numero === "string" && d.numero.trim() &&
+  dataValida(d.dataEmissao) && dataValida(d.dataValidade) &&
+  Number.isInteger(Number(d.idPessoa)) && Number(d.idPessoa) > 0;
+
+function rotas(url, lista, nome, validar, criar, atualizar, aoExcluir) {
+  app.get(url, (req, res) => res.json(lista));
+
+  app.get(`${url}/:id`, (req, res) => {
+    const item = lista.find((x) => x.id === Number(req.params.id));
+    return item
+      ? res.json(item)
+      : res.status(404).json({ erro: `${nome} não encontrado(a).` });
+  });
+
+  app.post(url, (req, res) => {
+    const erro = validar(req.body);
+    if (erro) return res.status(erro.status).json({ erro: erro.mensagem });
+    const item = criar(req.body);
+    lista.push(item);
+    return res.status(201).json({ mensagem: `${nome}: cadastro concluído.`, [nome.toLowerCase()]: item });
+  });
+
+  app.put(`${url}/:id`, (req, res) => {
+    const item = lista.find((x) => x.id === Number(req.params.id));
+    if (!item) return res.status(404).json({ erro: `${nome} não encontrado(a).` });
+    const erro = validar(req.body, item);
+    if (erro) return res.status(erro.status).json({ erro: erro.mensagem });
+    atualizar(item, req.body);
+    return res.json({ mensagem: `${nome}: atualização concluída.`, [nome.toLowerCase()]: item });
+  });
+
+  app.delete(`${url}/:id`, (req, res) => {
+    const indice = lista.findIndex((x) => x.id === Number(req.params.id));
+    if (indice < 0) return res.status(404).json({ erro: `${nome} não encontrado(a).` });
+    const [item] = lista.splice(indice, 1);
+    if (aoExcluir) aoExcluir(item);
+    return res.json({ mensagem: `${nome}: exclusão concluída.` });
+  });
 }
 
-function camposPessoaValidos(dados) {
-  return (
-    dados &&
-    typeof dados.nome === "string" &&
-    dados.nome.trim() &&
-    typeof dados.cpf === "string" &&
-    dados.cpf.trim() &&
-    dataValida(dados.dataNascimento)
-  );
-}
+rotas(
+  "/pessoas",
+  pessoas,
+  "Pessoa",
+  (d) => dadosPessoaValidos(d)
+    ? null
+    : { status: 400, mensagem: "Informe nome, CPF e dataNascimento válida (AAAA-MM-DD)." },
+  (d) => ({ id: idPessoa++, nome: d.nome.trim(), cpf: d.cpf.trim(), dataNascimento: d.dataNascimento }),
+  (p, d) => Object.assign(p, { nome: d.nome.trim(), cpf: d.cpf.trim(), dataNascimento: d.dataNascimento }),
+  (p) => {
+    const i = passaportes.findIndex((x) => x.idPessoa === p.id);
+    if (i >= 0) passaportes.splice(i, 1);
+  },
+);
 
-function camposPassaporteValidos(dados) {
-  return (
-    dados &&
-    typeof dados.numero === "string" &&
-    dados.numero.trim() &&
-    dataValida(dados.dataEmissao) &&
-    dataValida(dados.dataValidade) &&
-    Number.isInteger(Number(dados.idPessoa)) &&
-    Number(dados.idPessoa) > 0
-  );
-}
+rotas(
+  "/passaportes",
+  passaportes,
+  "Passaporte",
+  (d, atual) => {
+    if (!dadosPassaporteValidos(d))
+      return { status: 400, mensagem: "Informe numero, datas válidas e idPessoa." };
+    const pessoaId = Number(d.idPessoa);
+    if (!pessoas.some((p) => p.id === pessoaId))
+      return { status: 404, mensagem: "Pessoa associada não encontrada." };
+    if (passaportes.some((p) => p.idPessoa === pessoaId && p.id !== atual?.id))
+      return { status: 409, mensagem: "Esta pessoa já possui passaporte." };
+    return null;
+  },
+  (d) => ({
+    id: idPassaporte++,
+    numero: d.numero.trim(),
+    dataEmissao: d.dataEmissao,
+    dataValidade: d.dataValidade,
+    idPessoa: Number(d.idPessoa),
+  }),
+  (p, d) => Object.assign(p, {
+    numero: d.numero.trim(),
+    dataEmissao: d.dataEmissao,
+    dataValidade: d.dataValidade,
+    idPessoa: Number(d.idPessoa),
+  }),
+);
 
-function idDaRota(valor) {
-  const id = Number(valor);
-  return Number.isInteger(id) && id > 0 ? id : null;
-}
-
-app.get("/", (req, res) => {
-  res.json({ mensagem: "API de pessoas e passaportes funcionando." });
-});
-
-app.post("/pessoas", (req, res) => {
-  if (!camposPessoaValidos(req.body)) {
-    return res.status(400).json({
-      erro: "Informe nome, CPF e dataNascimento válida (AAAA-MM-DD).",
-    });
-  }
-
-  const pessoa = {
-    id: proximoIdPessoa++,
-    nome: req.body.nome.trim(),
-    cpf: req.body.cpf.trim(),
-    dataNascimento: req.body.dataNascimento,
-  };
-
-  pessoas.push(pessoa);
-  return res.status(201).json({ mensagem: "Pessoa cadastrada.", pessoa });
-});
-
-app.get("/pessoas", (req, res) => {
-  res.json(pessoas);
-});
-
-app.get("/pessoas/:id", (req, res) => {
-  const id = idDaRota(req.params.id);
-  const pessoa = pessoas.find((item) => item.id === id);
-
-  if (!pessoa) {
-    return res.status(404).json({ erro: "Pessoa não encontrada." });
-  }
-
-  return res.json(pessoa);
-});
-
-app.put("/pessoas/:id", (req, res) => {
-  const id = idDaRota(req.params.id);
-  const pessoa = pessoas.find((item) => item.id === id);
-
-  if (!pessoa) {
-    return res.status(404).json({ erro: "Pessoa não encontrada." });
-  }
-  if (!camposPessoaValidos(req.body)) {
-    return res.status(400).json({
-      erro: "Informe nome, CPF e dataNascimento válida (AAAA-MM-DD).",
-    });
-  }
-
-  pessoa.nome = req.body.nome.trim();
-  pessoa.cpf = req.body.cpf.trim();
-  pessoa.dataNascimento = req.body.dataNascimento;
-  return res.json({ mensagem: "Pessoa atualizada.", pessoa });
-});
-
-app.delete("/pessoas/:id", (req, res) => {
-  const id = idDaRota(req.params.id);
-  const indice = pessoas.findIndex((item) => item.id === id);
-
-  if (indice === -1) {
-    return res.status(404).json({ erro: "Pessoa não encontrada." });
-  }
-
-  pessoas.splice(indice, 1);
-  const indicePassaporte = passaportes.findIndex(
-    (item) => item.idPessoa === id,
-  );
-  if (indicePassaporte !== -1) {
-    passaportes.splice(indicePassaporte, 1);
-  }
-
-  return res.json({ mensagem: "Pessoa e seu passaporte excluídos." });
-});
-
-app.post("/passaportes", (req, res) => {
-  if (!camposPassaporteValidos(req.body)) {
-    return res.status(400).json({
-      erro:
-        "Informe numero, dataEmissao, dataValidade e idPessoa válido. Use datas no formato AAAA-MM-DD.",
-    });
-  }
-
-  const idPessoa = Number(req.body.idPessoa);
-  if (!pessoas.some((item) => item.id === idPessoa)) {
-    return res.status(404).json({ erro: "Pessoa associada não encontrada." });
-  }
-  if (passaportes.some((item) => item.idPessoa === idPessoa)) {
-    return res.status(409).json({ erro: "Esta pessoa já possui passaporte." });
-  }
-
-  const passaporte = {
-    id: proximoIdPassaporte++,
-    numero: req.body.numero.trim(),
-    dataEmissao: req.body.dataEmissao,
-    dataValidade: req.body.dataValidade,
-    idPessoa,
-  };
-
-  passaportes.push(passaporte);
-  return res.status(201).json({ mensagem: "Passaporte cadastrado.", passaporte });
-});
-
-app.get("/passaportes", (req, res) => {
-  res.json(passaportes);
-});
-
-app.get("/passaportes/:id", (req, res) => {
-  const id = idDaRota(req.params.id);
-  const passaporte = passaportes.find((item) => item.id === id);
-
-  if (!passaporte) {
-    return res.status(404).json({ erro: "Passaporte não encontrado." });
-  }
-
-  return res.json(passaporte);
-});
-
-app.put("/passaportes/:id", (req, res) => {
-  const id = idDaRota(req.params.id);
-  const passaporte = passaportes.find((item) => item.id === id);
-
-  if (!passaporte) {
-    return res.status(404).json({ erro: "Passaporte não encontrado." });
-  }
-  if (!camposPassaporteValidos(req.body)) {
-    return res.status(400).json({
-      erro:
-        "Informe numero, dataEmissao, dataValidade e idPessoa válido. Use datas no formato AAAA-MM-DD.",
-    });
-  }
-
-  const idPessoa = Number(req.body.idPessoa);
-  if (!pessoas.some((item) => item.id === idPessoa)) {
-    return res.status(404).json({ erro: "Pessoa associada não encontrada." });
-  }
-  if (
-    passaportes.some(
-      (item) => item.idPessoa === idPessoa && item.id !== passaporte.id,
-    )
-  ) {
-    return res.status(409).json({ erro: "Esta pessoa já possui passaporte." });
-  }
-
-  passaporte.numero = req.body.numero.trim();
-  passaporte.dataEmissao = req.body.dataEmissao;
-  passaporte.dataValidade = req.body.dataValidade;
-  passaporte.idPessoa = idPessoa;
-  return res.json({ mensagem: "Passaporte atualizado.", passaporte });
-});
-
-app.delete("/passaportes/:id", (req, res) => {
-  const id = idDaRota(req.params.id);
-  const indice = passaportes.findIndex((item) => item.id === id);
-
-  if (indice === -1) {
-    return res.status(404).json({ erro: "Passaporte não encontrado." });
-  }
-
-  passaportes.splice(indice, 1);
-  return res.json({ mensagem: "Passaporte excluído." });
-});
-
-app.use((req, res) => {
-  res.status(404).json({ erro: "Rota não encontrada." });
-});
-
+app.use((req, res) => res.status(404).json({ erro: "Rota não encontrada." }));
 app.use((erro, req, res, next) => {
-  if (erro instanceof SyntaxError && erro.status === 400 && "body" in erro) {
-    return res.status(400).json({ erro: "O corpo da requisição não é um JSON válido." });
-  }
-
+  if (erro instanceof SyntaxError && erro.status === 400)
+    return res.status(400).json({ erro: "JSON inválido." });
   console.error(erro);
   return res.status(500).json({ erro: "Erro interno do servidor." });
 });
 
-app.listen(PORT, () => {
-  console.log(`Servidor rodando em http://localhost:${PORT}`);
-});
+app.listen(process.env.PORT || 3000, () =>
+  console.log(`Servidor rodando em http://localhost:${process.env.PORT || 3000}`),
+);
